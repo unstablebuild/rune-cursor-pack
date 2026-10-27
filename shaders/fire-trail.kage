@@ -1,10 +1,10 @@
 //kage:unit pixels
 
-// Cursor flame: a tapered flame that stretches from where the cursor was
-// to where it jumped, its tail burning down into the cursor. It is the
-// trail Rune plays when gui.cursor_effect.shader is empty. 250ms suits it.
+// Cursor fire trail: a tapered flame that stretches from where the cursor
+// was to where it jumped, its tail burning down into the cursor. It is the
+// trail Rune plays when animations.cursor.shader is empty. 250ms suits it.
 //
-// Rune sets the uniforms below; see "Cursor effect" in the Config docs.
+// Rune sets the uniforms below; see "Cursor effect" in the Animations guide.
 // Rectangles are x, y, width, height in window pixels. imageSrc0 is the
 // window, and the color returned replaces the pixel.
 

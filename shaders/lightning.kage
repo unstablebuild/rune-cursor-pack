@@ -4,7 +4,7 @@
 // A faint stepped leader forks its way down to the cursor, then return
 // strokes flash along the same channel and light up the text around it.
 //
-// Rune sets the uniforms below; see "Cursor effect" in the Config docs.
+// Rune sets the uniforms below; see "Cursor effect" in the Animations guide.
 // Rectangles are x, y, width, height in window pixels. imageSrc0 is the
 // window, and the color returned replaces the pixel. Timings are fractions
 // of Duration; 300ms to 400ms reads as a real strike.
