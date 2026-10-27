@@ -1,0 +1,179 @@
+//kage:unit pixels
+
+// Cursor lightning: a bolt strikes the cursor from where it jumped from.
+// A faint stepped leader forks its way down to the cursor, then return
+// strokes flash along the same channel and light up the text around it.
+//
+// Rune sets the uniforms below; see "Cursor effect" in the Config docs.
+// Rectangles are x, y, width, height in window pixels. imageSrc0 is the
+// window, and the color returned replaces the pixel. Timings are fractions
+// of Duration; 300ms to 400ms reads as a real strike.
+
+package main
+
+// Typing, Enter and line wraps strike nothing: only moves of two rows, or
+// of nine columns along a row, pay for a full-window pass per frame.
+const MinJumpRows = 2
+const MinJumpColumns = 9
+
+var Time float
+var Duration float
+var Cursor vec4
+var PreviousCursor vec4
+
+const pi = 3.14159265
+
+// leaderEnd is when the leader reaches the cursor and the first return
+// stroke flashes.
+const leaderEnd = 0.12
+
+// hash is Dave Hoskins' sine-free hash: https://www.shadertoy.com/view/4djSRW
+func hash(x float) float {
+	h := fract(x * 0.1031)
+	h *= h + 33.33
+	h *= h + h
+	return fract(h)
+}
+
+// octave returns, at t in [0, 1], the value and the slope per unit of t of
+// a random polyline of n segments whose vertices lie within amp of 0.
+func octave(t, n, amp, seed float) (float, float) {
+	x := t * n
+	i := floor(x)
+	a := hash(i*1.618+seed)*2 - 1
+	b := hash((i+1)*1.618+seed)*2 - 1
+	return mix(a, b, x-i) * amp, (b - a) * amp * n
+}
+
+// channel returns how far the main bolt strays, at t, from the straight
+// line between its ends, and the slope of that offset per pixel. Kinks are
+// spaced in pixels so a short jump is as jagged as a long one. fine seeds
+// the finest kinks, which shift between return strokes.
+func channel(t, span, u, seed, fine float) (float, float) {
+	o0, s0 := octave(t, 3, 0.07*span, seed)
+	n1 := max(2, span/(70*u))
+	o1, s1 := octave(t, n1, 0.3*span/n1, seed+31)
+	n2 := max(3, span/(25*u))
+	o2, s2 := octave(t, n2, 0.3*span/n2, seed+57)
+	n3 := max(4, span/(9*u))
+	o3, s3 := octave(t, n3, 0.25*span/n3, fine)
+
+	// The broad bend eases into the ends, but the kinks only flatten within
+	// a few pixels of them, so the bolt still meets its ends at an angle.
+	e0 := sin(pi * t)
+	de0 := pi * cos(pi*t)
+	r := span / (8 * u)
+	e1 := clamp(min(t, 1-t)*r, 0, 1)
+	de1 := 0.0
+	if e1 < 1 {
+		de1 = r * sign(0.5-t)
+	}
+	o := o1 + o2 + o3
+	return o0*e0 + o*e1, (s0*e0 + o0*de0 + (s1+s2+s3)*e1 + o*de1) / span
+}
+
+// fork is channel for a branch, attached at t = 0 and loose at t = 1.
+func fork(t, span, u, seed float) (float, float) {
+	n1 := max(2, span/(25*u))
+	o1, s1 := octave(t, n1, 0.35*span/n1, seed)
+	n2 := max(3, span/(9*u))
+	o2, s2 := octave(t, n2, 0.3*span/n2, seed+19)
+	e := min(1, t*span/(6*u))
+	return (o1 + o2) * e, (s1 + s2) * e / span
+}
+
+// glow is the light given off, at distance d, by a bolt whose white-hot
+// core is w wide on each side.
+func glow(d, w, u float) vec3 {
+	core := 1 - smoothstep(w, w+1.2, d)
+	return core*vec3(1, 1, 1) +
+		exp(-d/(2.5*u))*vec3(0.55, 0.68, 1)*0.9 +
+		exp(-d/(11*u))*vec3(0.35, 0.38, 1)*0.35
+}
+
+func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4 {
+	window := imageSrc0UnsafeAt(srcPos)
+	from := PreviousCursor.xy + PreviousCursor.zw/2
+	head := Cursor.xy + Cursor.zw/2
+	// The cell height, whether the cursor is a block, a bar or an underline.
+	size := max(Cursor.w, 2*Cursor.z)
+	span := distance(from, head)
+	// Typing back to where the strike started leaves the bolt no length.
+	if span < 1 {
+		return window
+	}
+	u := size / 30
+	p := clamp(Time/Duration, 0, 1)
+	// Seeded by where the bolt starts alone, so typing during a strike
+	// stretches the bolt rather than drawing a new one.
+	seed := hash(dot(from, vec2(0.0131, 0.0717))) * 97
+
+	// The leader, then three return strokes down the same channel, each
+	// fainter than the last.
+	reveal := min(1, p/leaderEnd)
+	leader := 0.0
+	if p < leaderEnd {
+		leader = 1
+	}
+	stroke := 0.0
+	fine := seed + 11
+	if p >= leaderEnd {
+		stroke = exp(-(p - leaderEnd) * 14)
+	}
+	if p >= 0.34 {
+		stroke += 0.7 * exp(-(p-0.34)*16)
+		fine += 7
+	}
+	if p >= 0.56 {
+		stroke += 0.45 * exp(-(p-0.56)*18)
+		fine += 7
+	}
+	stroke *= 1 - smoothstep(0.7, 1, p)
+
+	dir := (head - from) / span
+	nrm := vec2(-dir.y, dir.x)
+	q := dstPos.xy - from
+	t := dot(q, dir) / span
+	tc := clamp(t, 0, reveal)
+	o, m := channel(tc, span, u, seed, fine)
+	d := length(vec2((t-tc)*span, (dot(q, nrm)-o)/sqrt(1+m*m)))
+
+	// The leader is faint but for its tip, still burning its way down.
+	mainI := stroke + leader*(0.2+0.8*smoothstep(reveal-0.2, reveal, tc))
+	light := glow(d, (0.7+0.6*stroke)*u, u) * mainI
+	illum := mainI * exp(-d/(18*u))
+
+	// Forks branch off on the way down, one in each third of the bolt so they
+	// do not bunch up, and die out after the first stroke. Short jumps have
+	// none.
+	forkI := (leader*0.6 + stroke*0.5) * (1 - smoothstep(leaderEnd, 0.4, p)) *
+		smoothstep(4*size, 10*size, span)
+	for i := 0; i < 3; i++ {
+		k := seed + float(i)*13.7
+		t0 := 0.12 + 0.22*float(i) + 0.18*hash(k+1)
+		o0, _ := channel(t0, span, u, seed, fine)
+		start := from + dir*t0*span + nrm*o0
+		a := sign(hash(k+2)-0.5) * (0.35 + 0.45*hash(k+3))
+		fdir := vec2(dir.x*cos(a)-dir.y*sin(a), dir.x*sin(a)+dir.y*cos(a))
+		fspan := span * (0.1 + 0.18*hash(k+4)) * (1.2 - t0)
+		freveal := clamp((reveal-t0)*4, 0, 1)
+		fq := dstPos.xy - start
+		ft := dot(fq, fdir) / fspan
+		ftc := clamp(ft, 0, freveal)
+		fo, fm := fork(ftc, fspan, u, k+5)
+		fd := length(vec2((ft-ftc)*fspan, (dot(fq, vec2(-fdir.y, fdir.x))-fo)/sqrt(1+fm*fm)))
+		fI := forkI * step(t0, reveal) * (1 - 0.6*ftc)
+		light += glow(fd, mix(0.5, 0.15, ftc)*u, u) * fI
+		illum += fI * 0.5 * exp(-fd/(12*u))
+	}
+
+	// The strike blooms at the cursor and faintly lights the whole window.
+	bloom := stroke * exp(-distance(dstPos.xy, head)/(5*u))
+	light += vec3(0.8, 0.88, 1) * bloom
+	illum += stroke*0.05 + bloom
+
+	lit := window.rgb * (1 + illum*vec3(0.8, 0.9, 1.15))
+	la := clamp(max(light.r, max(light.g, light.b)), 0, 1)
+	alpha := window.a + la*(1-window.a)
+	return vec4(min(lit+light, vec3(alpha)), alpha)
+}

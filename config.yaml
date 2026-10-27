@@ -1,0 +1,9 @@
+gui:
+  cursor_effect:
+    enabled: true
+    # Shaders in this pack (previews in the README). To switch, set "shader"
+    # to one of these paths and "duration" to its suggested value:
+    #   lightning: $RUNE_DATADIR/lib/github.com/ernestrc/rune-cursor-pack/shaders/lightning.kage (350ms)
+    #   flame:     $RUNE_DATADIR/lib/github.com/ernestrc/rune-cursor-pack/shaders/flame.kage (250ms)
+    shader: $RUNE_DATADIR/lib/$RUNE_PKG_ID/shaders/lightning.kage
+    duration: 350ms
