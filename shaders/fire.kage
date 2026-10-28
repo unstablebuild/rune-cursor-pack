@@ -1,0 +1,360 @@
+//kage:unit pixels
+
+// Cursor fire: a fuse burns from where the cursor was to where it jumped,
+// spitting sparks, and the cursor bursts into flame when the fuse reaches it.
+// The flames twist and lick up over the lines above, crackle and throw
+// sparks, ripple the text in their heat and light up the code around them,
+// then die down to embers and a wisp of smoke.
+//
+// Rune sets the uniforms below; see "Cursor effect" in the Animations guide.
+// Rectangles are x, y, width, height in window pixels. imageSrc0 is the
+// window, and the color returned replaces the pixel. 800ms suits it.
+
+package main
+
+// Typing, Enter and line wraps light nothing: only moves of two rows, or of
+// nine columns along a row, pay for a full-window pass per frame.
+const MinJumpRows = 2
+const MinJumpColumns = 9
+
+var Time float
+var Duration float
+var Cursor vec4
+var PreviousCursor vec4
+
+const pi = 3.14159265
+
+// hash is Dave Hoskins' sine-free hash: https://www.shadertoy.com/view/4djSRW
+func hash(x float) float {
+	h := fract(x * 0.1031)
+	h *= h + 33.33
+	h *= h + h
+	return fract(h)
+}
+
+// hash2 is hash for a point.
+func hash2(p vec2) float {
+	p3 := fract(vec3(p.x, p.y, p.x) * 0.1031)
+	p3 += dot(p3, vec3(p3.y, p3.z, p3.x)+33.33)
+	return fract((p3.x + p3.y) * p3.z)
+}
+
+// noise is value noise in [0, 1].
+func noise(p vec2) float {
+	i := floor(p)
+	f := fract(p)
+	u := f * f * (3 - 2*f)
+	a := hash2(i)
+	b := hash2(i + vec2(1, 0))
+	c := hash2(i + vec2(0, 1))
+	d := hash2(i + vec2(1, 1))
+	return mix(mix(a, b, u.x), mix(c, d, u.x), u.y)
+}
+
+// turbulence sums four octaves of noise into [0, 1], each turned against
+// the last so their grids do not line up. Each rises at t times its speed,
+// the smaller eddies faster, so the pattern churns as it rises rather than
+// scrolling up.
+func turbulence(p vec2, t float) float {
+	v := 0.0
+	a := 0.5
+	f := 1.0
+	for i := 0; i < 4; i++ {
+		k := float(i)
+		q := (p - vec2(0, t*(1+0.3*k))) * f
+		c := cos(k * 0.9)
+		s := sin(k * 0.9)
+		v += a * noise(vec2(c*q.x-s*q.y, s*q.x+c*q.y)+k*17.13)
+		a *= 0.5
+		f *= 2.03
+	}
+	return v / 0.9375
+}
+
+// blackbody maps a temperature in [0, 1] to the color of a body that hot:
+// dull red, then orange and yellow, then near white. Values above 1 are
+// brighter than the screen can show.
+func blackbody(t float) vec3 {
+	t = max(t, 0)
+	t2 := t * t
+	return vec3(1.6*t, 1.4*t2*t, t2*t2*t2)
+}
+
+// sheet returns how far p lies from the flame front, the thin sheet where
+// the fuel meets the air and burns, and how high up the flame p lies once
+// the air has moved it, from 0 at the root to 1 at the tip. p is in cell
+// heights: x across, y up from the root and z out of the screen.
+//
+// The front is a hollow teardrop hf tall and w wide that twists as it
+// rises. Waves of air fold it over on itself, more so the higher it rises,
+// and they rise faster than the flame, so it licks upward and its tip tears
+// into thin tongues. A ray that grazes a fold runs along it for a while and
+// gathers its light, which draws the bright, swirling licks.
+func sheet(p vec3, hf, w, t float) (float, float) {
+	a := p.y*1.2 - t*3
+	c := cos(a)
+	s := sin(a)
+	p = vec3(c*p.x-s*p.z, p.y, s*p.x+c*p.z)
+	amp := 0.25 + clamp(p.y/hf, 0, 1.2)
+	f := 2.2
+	for i := 0; i < 4; i++ {
+		k := float(i) * 2.1
+		p += sin(vec3(p.y-t*9, p.z+t*2, p.x-t*3)*f+k) * vec3(1, 0.35, 1) * (amp * 0.45 / f)
+		f *= 1.8
+	}
+	y := p.y / hf
+	yc := clamp(y, 0, 1)
+	// Round at the root, widest a quarter of the way up, and drawn to a
+	// point at the tip.
+	r := w * (1 - yc) * mix(0.3, 1.1, smoothstep(0, 0.3, yc))
+	return abs(length(vec2(p.x, p.z)) - r), y
+}
+
+// flight returns where a spark thrown from o at velocity v is t seconds
+// later, with the air slowing it and gravity g, which is negative for
+// embers that the hot air carries up, pulling it down.
+func flight(o, v vec2, g, t float) vec2 {
+	e := (1 - exp(-3*t)) / 3
+	return o + v*e + vec2(0, g*(t-e)/3)
+}
+
+// streak is how much a spark lights p as it moves from a to b while the
+// frame is exposed, r being its radius: a hot core, brightest at its head
+// b, and the glow it gives off around it.
+func streak(p, a, b vec2, r float) float {
+	ab := b - a
+	t := clamp(dot(p-a, ab)/max(dot(ab, ab), 0.0001), 0, 1)
+	d := distance(p, a+ab*t)
+	return (exp(-d*d/(r*r)) + 0.1*exp(-d/(3*r))) * (0.3 + 0.7*t)
+}
+
+func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4 {
+	pos := dstPos.xy
+	// The cell height, whether the cursor is a block, a bar or an underline.
+	size := max(Cursor.w, 2*Cursor.z)
+	from := PreviousCursor.xy + PreviousCursor.zw/2
+	head := Cursor.xy + Cursor.zw/2
+	// The fire burns on the cursor's line, from the bottom of its cell.
+	base := vec2(head.x, Cursor.y+Cursor.w)
+	span := distance(from, head)
+	dir := (head - from) / max(span, 0.001)
+	// Seeded by where the fuse starts alone, so typing while it burns moves
+	// the fire rather than lighting a new one.
+	seed := hash2(from*0.0131) * 97
+
+	// The fuse takes longer on longer jumps, but never long.
+	fuse := Duration * mix(0.07, 0.18, smoothstep(2*size, 30*size, span))
+	fuseT := clamp(Time/fuse, 0, 1)
+	ignite := Time - fuse
+	burn := Duration - fuse
+	// s runs from 0 when the cursor catches fire to 1 at the end.
+	s := clamp(ignite/burn, 0, 1)
+	lit := 0.0
+	if ignite > 0 {
+		lit = 1
+	}
+	// The flames shoot up, settle, then die down, leaving the embers.
+	flare := lit * (1 - exp(-ignite/0.04)) * (1 + 0.4*exp(-ignite/0.12))
+	flames := flare * (1 - smoothstep(0.4, 0.92, s))
+	embers := lit * (1 - exp(-ignite/0.06)) * (1 - smoothstep(0.6, 1, s))
+	smoky := lit * smoothstep(0.35, 0.7, s) * (1 - smoothstep(0.8, 1, s))
+	fade := 1 - smoothstep(0.85, 1, Time/Duration)
+
+	// Gusts sway the flames, and their light flickers with them: slowly as
+	// they swell and shrink, quickly as their tongues tear off.
+	lean := (noise(vec2(Time*2.5, seed+3)) - 0.5) * 0.8
+	flicker := 0.7 + 0.35*noise(vec2(Time*4, seed+7)) + 0.25*noise(vec2(Time*19, seed+11))
+
+	// The fire crackles: pockets of gas in the fuel burst, each with a
+	// flash and a spray of sparks, while the flames burn high.
+	crackle := 0.0
+	for i := 0; i < 14; i++ {
+		k := seed + 101 + float(i)*3.77
+		age := ignite - 0.02 - burn*0.72*hash(k)
+		if age > 0 {
+			crackle += exp(-age/0.02) * (0.3 + 0.5*hash(k+1))
+		}
+	}
+	crackle *= lit
+
+	heat := 0.0
+	root := 0.0
+	sparks := vec3(0)
+	haze := vec2(0)
+	smoke := 0.0
+
+	// Fire local coordinates, in cell heights: y up from the base.
+	q := vec2(pos.x-base.x, base.y-pos.y) / size
+	hf := 0.5 + 3.6*flames // flame height
+	w := 0.8 + 0.35*flames // flame width
+	// Takes in the flames, the sparks they throw and their smoke.
+	near := lit > 0 && abs(q.x) < 6 && q.y > -3 && q.y < 10
+
+	if near {
+		// The gusts bend the flames, more so the higher they lick.
+		yr := max(q.y, 0) / hf
+		fx := q.x - lean*yr*yr*hf*0.3
+
+		bx := w*1.2 + 0.7
+		by := hf*1.4 + 0.6
+		if abs(fx) < bx && q.y > -0.6 && q.y < by && flames > 0.001 {
+			// March a ray into the screen through the flame front, gathering
+			// the light of the sheet near it. Steps shrink as the ray nears
+			// the sheet, and start at a different depth at each pixel, so
+			// the steps do not show as bands.
+			z := -(w*1.2 + 0.5) - 0.04*hash2(pos)
+			acc := 0.0
+			for i := 0; i < 28; i++ {
+				d, y := sheet(vec3(fx, q.y, z), hf, w, Time)
+				st := 0.035 + 0.5*d
+				g := st / (1 + d*d*1100)
+				yc := y * hf
+				// Soot glows yellow above the root, where the fuel burns
+				// blue, and the tongues burn out above the tip.
+				acc += g * smoothstep(0.08, 0.4, yc) * (1 - smoothstep(0.7, 1.2, y))
+				root += g * smoothstep(-0.3, 0.05, yc) * (1 - smoothstep(0.05, 0.3, yc))
+				z += st
+			}
+			// Where the folds pile up the flame burns yellow, then white low
+			// down; thin licks burn orange and red, the more so toward the
+			// tips. It burns brighter as the fire crackles.
+			// The faintest glow fades out before the edges of the march.
+			strength := min(flames*1.6, 1) * (1 - smoothstep(bx-0.5, bx, abs(fx))) * (1 - smoothstep(by-0.5, by, q.y))
+			cool := mix(1.25, 0.72, pow(clamp(q.y/hf, 0, 1), 0.7))
+			glow := 1 - exp(-acc*(3.2+1.5*crackle))
+			heat += (glow + 0.3*glow*glow*glow) * cool * strength
+			root *= strength * exp(-fx*fx/(w*w*0.5))
+		}
+
+		// Embers glow on the line once the flames have gone.
+		ex := q.x / w
+		coal := noise(pos/size*vec2(3.5, 2.5) + vec2(seed, Time*1.5))
+		bed := (1 - smoothstep(0.6, 1.05, abs(ex))) * smoothstep(-0.25, 0.1, q.y) * (1 - smoothstep(0.6, 0.95, q.y))
+		heat = max(heat, bed*embers*(0.25+0.35*coal)*(1-0.6*flames))
+
+		// Embers ride the hot air up out of the flames, wandering as it
+		// eddies and twinkling as they cool.
+		for i := 0; i < 10; i++ {
+			k := seed + float(i)*7.31
+			age := ignite - 0.02 - burn*0.75*hash(k)
+			life := 0.25 + 0.4*hash(k+1)
+			if age > 0 && age < life {
+				o := base + vec2((hash(k+2)*2-1)*0.6*w, -(0.2+0.4*hf*hash(k+3)))*size
+				v := vec2((hash(k+4)*2-1)*1.5, -(2+3*hash(k+5))) * size
+				wf := 7 + 9*hash(k+6)
+				a0 := max(age-0.02, 0)
+				p0 := flight(o, v, -9*size, a0) + vec2(0.18*size*sin(a0*wf+k), 0)
+				p1 := flight(o, v, -9*size, age) + vec2(0.18*size*sin(age*wf+k), 0)
+				cool := 1 - age/life
+				twinkle := 0.6 + 0.4*sin(age*(35+40*hash(k+7))+k)
+				sparks += blackbody(0.45+0.75*cool) * streak(pos, p0, p1, (0.02+0.025*hash(k+8))*size) * cool * twinkle
+			}
+		}
+
+		// Each crackle flashes and throws a few white-hot sparks, that
+		// the air slows and gravity pulls back down as they cool.
+		for i := 0; i < 14; i++ {
+			k := seed + 101 + float(i)*3.77
+			age := ignite - 0.02 - burn*0.72*hash(k)
+			if age > 0 && age < 0.4 {
+				o := base + vec2((hash(k+2)*2-1)*0.5*w, -(0.15+0.25*hf*hash(k+3)))*size
+				pd := distance(pos, o) / size
+				heat += exp(-age/0.02) * 0.9 * exp(-pd*pd/0.008)
+				for j := 0; j < 3; j++ {
+					kj := k + float(j)*1.31
+					life := 0.12 + 0.26*hash(kj+4)
+					if age < life {
+						an := -pi/2 + (hash(kj+5)*2-1)*1.4
+						v := vec2(cos(an), sin(an)) * (7 + 11*hash(kj+6)) * size
+						p0 := flight(o, v, 24*size, max(age-0.016, 0))
+						p1 := flight(o, v, 24*size, age)
+						cool := 1 - age/life
+						sparks += blackbody(0.6+0.8*cool) * streak(pos, p0, p1, 0.03*size) * cool
+					}
+				}
+			}
+		}
+
+		// The heat ripples the text above the flames.
+		hm := flames * exp(-fx*fx/(w*w)*0.8) * smoothstep(0.3*hf, 0.8*hf, q.y) * (1 - smoothstep(hf, hf*1.3+0.9, q.y))
+		hn := vec2(noise(vec2(pos.x/size*3, pos.y/size*2+Time*9)+seed),
+			noise(vec2(pos.x/size*3, pos.y/size*2+Time*9)+seed+vec2(3.7, 8.1))) - 0.5
+		haze += hn * 0.18 * size * hm
+
+		// Smoke curls up out of the flames as they die down.
+		sy := q.y - 0.3
+		plume := (1 - smoothstep(0.5, 1.1, abs(q.x-lean*sy*0.4)/(w*(0.55+0.2*max(sy, 0))))) *
+			smoothstep(0, 0.9, sy) * (1 - smoothstep(2.4, 4.4, sy))
+		if plume*smoky > 0 {
+			n := turbulence(vec2(pos.x/size*2.2, pos.y/size)+seed, Time*6)
+			smoke = smoothstep(0.42, 0.78, n) * plume * smoky
+		}
+	}
+
+	// The fuse: the burning line, its hot head and the sparks it spits.
+	tc := clamp(dot(pos-from, dir)/max(span, 0.001), 0, fuseT)
+	v := pos - (from + dir*tc*span)
+	hp := from + dir*fuseT*span
+	hd := distance(pos, hp) / size
+	active := 1 - smoothstep(0, 0.05, ignite)
+	if length(v) < 5*size && Time < fuse+0.45 {
+		n := turbulence(vec2(pos.x/size*2.2, pos.y/size)+seed, Time*7)
+		age := Time - tc*fuse
+		hot := (0.55*exp(-age/0.05) + 0.4*exp(-age/0.2)) * (1 - smoothstep(0.1, 0.25, ignite))
+		// A thin line of burning fuel, from which short flames lick up:
+		// distances above it count for less than distances below.
+		d := length(v) / size
+		vy := v.y * mix(2.5, 0.5, step(v.y, 0))
+		r := length(vec2(v.x, vy)) / size
+		lick := smoothstep(0, 0.05, (n-0.5)*0.9+0.28*hot-r)
+		heat += hot * max(exp(-d*d/0.004), lick*(0.55+0.4*n))
+		// The head of the fuse is the hottest point of all.
+		heat += active * 1.3 * exp(-hd*hd/0.012)
+
+		// The head spits sparks all around as it burns, which fall.
+		for i := 0; i < 10; i++ {
+			k := seed + 41 + float(i)*5.13
+			at := (float(i) + hash(k)) / 10
+			age := Time - at*fuse
+			life := 0.07 + 0.16*hash(k+1)
+			if age > 0 && age < life {
+				o := from + dir*at*span
+				an := -pi/2 + (hash(k+2)*2-1)*2.4
+				vel := vec2(cos(an), sin(an)) * (5 + 11*hash(k+3)) * size
+				p0 := flight(o, vel, 22*size, max(age-0.016, 0))
+				p1 := flight(o, vel, 22*size, age)
+				cool := 1 - age/life
+				sparks += blackbody(0.7+0.6*cool) * streak(pos, p0, p1, 0.03*size) * cool
+			}
+		}
+	}
+
+	// The firelight falls off with the square of the distance from the
+	// flames, as light does, so it reaches well across the code around
+	// them. It flickers with the flames, flares as they catch and flashes
+	// as they crackle, and the fuse lights the code it burns past.
+	lc := base + vec2(lean*0.2*hf, -0.35*hf)*size
+	ld := distance(pos, lc) / size
+	burst := lit * exp(-ignite/0.07)
+	light := (flames*flicker*1.1 + embers*0.3 + burst*1.5 + crackle*0.6) / (1 + ld*ld/10)
+	light += active * 0.9 / (1 + hd*hd/2.5)
+	light *= fade
+	sparks *= fade
+
+	o := imageSrc0Origin()
+	window := imageSrc0UnsafeAt(clamp(srcPos+haze, o, o+imageSrc0Size()-1))
+	// Firelight brightens what it falls on and glows in the dark around
+	// the fire, and turns what is light orange.
+	warm := vec3(1, 0.52, 0.22)
+	rgb := window.rgb*(1+light*1.6*warm) + light*0.14*warm*window.a
+	lum := dot(window.rgb, vec3(0.2126, 0.7152, 0.0722))
+	rgb *= mix(vec3(1), vec3(1, 0.84, 0.66), clamp(light*lum, 0, 0.6))
+	rgb = mix(rgb, vec3(0.42, 0.4, 0.38)*window.a, smoke*0.22)
+
+	fire := blackbody(heat) + vec3(0.15, 0.35, 1)*(1-exp(-root*4))*0.6 + sparks
+	// Flames are light, but bright enough to hide what is behind them.
+	a := clamp(max(fire.r, max(fire.g, fire.b)), 0, 1) * 0.92
+	out := fire + rgb*(1-a)
+	alpha := window.a + a*(1-window.a)
+	return vec4(min(out, vec3(alpha)), alpha)
+}

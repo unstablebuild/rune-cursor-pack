@@ -27,6 +27,19 @@ empty.
 - Path: `$RUNE_DATADIR/lib/github.com/unstablebuild/rune-cursor-pack/shaders/fire-trail.kage`
 - Suggested duration: `250ms`
 
+### Fire
+
+![A fuse burns to the cursor, which bursts into flame](previews/fire.gif)
+
+A fuse burns from where the cursor was to where it jumped, spitting sparks, and
+the cursor bursts into flame when the fuse reaches it. The flames twist and
+lick up over the lines above, crackle and throw sparks, and ripple the text in
+their heat. Their flickering light falls across the code around
+them, then they die down to embers and a wisp of smoke.
+
+- Path: `$RUNE_DATADIR/lib/github.com/unstablebuild/rune-cursor-pack/shaders/fire.kage`
+- Suggested duration: `800ms`
+
 ## Install
 
 Cursor shaders need the Rune GUI, in a version that has the
@@ -70,5 +83,5 @@ the shading language of Ebitengine, which draws Rune's window. See
 [Write your own](https://docs.rune.build/learn/animations#write-your-own) in
 Rune's Animations guide for the values Rune gives a shader, and for the
 `MinJumpRows` and `MinJumpColumns` constants that decide how far the cursor
-must move to play it. Both shaders here keep the defaults, so typing never pays
-for a redraw of the whole window.
+must move to play it. All the shaders here keep the defaults, so typing never
+pays for a redraw of the whole window.
