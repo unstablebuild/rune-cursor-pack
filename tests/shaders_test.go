@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -305,20 +306,79 @@ func TestRenderSnapshots(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	shader := loadShader(t, "smear")
-	for _, progress := range []float32{0, 0.1, 0.3, 0.5, 0.7, 0.95, 1} {
-		f := defaultFrame()
-		f.time = f.duration * progress
-		img := render(t, shader, f, background(255))
-		path := filepath.Join(dir, fmt.Sprintf("smear-%03d.png", int(progress*100)))
-		file, err := os.Create(path)
-		if err != nil {
-			t.Fatal(err)
+	snapshots := []struct {
+		name     string
+		duration float32
+		color    [4]float32
+	}{
+		{"smear", 0.3, defaultFrame().color},
+		{"lightning_color", 0.35, [4]float32{0.63, 0.13, 0.94, 1}},
+		{"lightning_color-red", 0.35, [4]float32{0.9, 0.2, 0.15, 1}},
+	}
+	for _, s := range snapshots {
+		shader := loadShader(t, strings.TrimSuffix(s.name, "-red"))
+		for _, progress := range []float32{0, 0.1, 0.13, 0.3, 0.5, 0.7, 0.95, 1} {
+			f := defaultFrame()
+			f.duration, f.color = s.duration, s.color
+			f.time = f.duration * progress
+			img := render(t, shader, f, background(255))
+			path := filepath.Join(dir, fmt.Sprintf("%s-%03d.png", s.name, int(progress*100)))
+			file, err := os.Create(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = png.Encode(file, img)
+			closeErr := file.Close()
+			if err != nil || closeErr != nil {
+				t.Fatalf("save snapshot: %v, %v", err, closeErr)
+			}
 		}
-		err = png.Encode(file, img)
-		closeErr := file.Close()
-		if err != nil || closeErr != nil {
-			t.Fatalf("save snapshot: %v, %v", err, closeErr)
+	}
+}
+
+func TestLightningColorFollowsCursor(t *testing.T) {
+	shader := loadShader(t, "lightning_color")
+	bg := background(255)
+	// Sum the light the bolt adds, per channel, at the first return stroke.
+	added := func(color [4]float32) [3]float64 {
+		f := defaultFrame()
+		f.duration, f.time, f.color = 0.35, 0.35*0.15, color
+		got := render(t, shader, f, bg)
+		var sum [3]float64
+		for i := 0; i < len(got.Pix); i += 4 {
+			for c := 0; c < 3; c++ {
+				sum[c] += float64(got.Pix[i+c]) - float64(bg.Pix[i+c])
+			}
+		}
+		return sum
+	}
+	for _, tc := range []struct {
+		name     string
+		color    [4]float32
+		dominant int
+	}{
+		{"red", [4]float32{0.9, 0.2, 0.15, 1}, 0},
+		{"green", [4]float32{0.1, 0.8, 0.2, 1}, 1},
+		// Premultiplied: straight (0.2, 0.3, 1) at half opacity.
+		{"translucent_blue", [4]float32{0.1, 0.15, 0.5, 0.5}, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sum := added(tc.color)
+			for c := 0; c < 3; c++ {
+				if c != tc.dominant && sum[c] >= sum[tc.dominant] {
+					t.Fatalf("bolt light %v is not dominated by channel %d", sum, tc.dominant)
+				}
+			}
+		})
+	}
+	// Gray, black and transparent cursors all strike the white bolt.
+	white := added([4]float32{1, 1, 1, 1})
+	if white[0] <= 0 {
+		t.Fatal("white cursor drew no bolt")
+	}
+	for _, color := range [][4]float32{{}, {0, 0, 0, 1}, {0.5, 0.5, 0.5, 1}} {
+		if sum := added(color); sum != white {
+			t.Fatalf("cursor %v: added light %v, want the white bolt's %v", color, sum, white)
 		}
 	}
 }

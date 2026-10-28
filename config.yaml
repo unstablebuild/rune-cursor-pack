@@ -3,9 +3,10 @@ animations:
     enabled: true
     # Shaders in this pack (previews in the README). To switch, set "shader"
     # to one of these paths and "duration" to its suggested value:
-    #   lightning:  $RUNE_DATADIR/lib/github.com/unstablebuild/rune-cursor-pack/shaders/lightning.kage (350ms)
-    #   fire-trail: $RUNE_DATADIR/lib/github.com/unstablebuild/rune-cursor-pack/shaders/fire-trail.kage (250ms)
-    #   fire:       $RUNE_DATADIR/lib/github.com/unstablebuild/rune-cursor-pack/shaders/fire.kage (800ms)
-    #   smear:      $RUNE_DATADIR/lib/github.com/unstablebuild/rune-cursor-pack/shaders/smear.kage (300ms)
-    shader: $RUNE_DATADIR/lib/$RUNE_PKG_ID/shaders/lightning.kage
+    #   lightning_color: $RUNE_DATADIR/lib/github.com/unstablebuild/rune-cursor-pack/shaders/lightning_color.kage (350ms)
+    #   lightning:       $RUNE_DATADIR/lib/github.com/unstablebuild/rune-cursor-pack/shaders/lightning.kage (350ms)
+    #   fire-trail:      $RUNE_DATADIR/lib/github.com/unstablebuild/rune-cursor-pack/shaders/fire-trail.kage (250ms)
+    #   fire:            $RUNE_DATADIR/lib/github.com/unstablebuild/rune-cursor-pack/shaders/fire.kage (800ms)
+    #   smear:           $RUNE_DATADIR/lib/github.com/unstablebuild/rune-cursor-pack/shaders/smear.kage (300ms)
+    shader: $RUNE_DATADIR/lib/$RUNE_PKG_ID/shaders/lightning_color.kage
     duration: 350ms

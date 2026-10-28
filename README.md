@@ -2,7 +2,7 @@
 
 Shaders that play over Rune's window when the cursor jumps, such as to another
 window or another part of a file. Installing the pack configures your instance of
-Rune to use the lightning shader.
+Rune to use the lightning color shader.
 
 ## Shaders
 
@@ -14,6 +14,15 @@ A bolt forks its way from where the cursor was to where it jumped, then flashes
 three times and lights up the text around it. Each jump draws a different bolt.
 
 - Path: `$RUNE_DATADIR/lib/github.com/unstablebuild/rune-cursor-pack/shaders/lightning.kage`
+- Suggested duration: `350ms`
+
+### Lightning color
+
+The lightning bolt, but its glow, the flash at the cursor and the light it
+throws on the text take your theme's cursor color. The core stays white-hot.
+A gray or black cursor strikes a white bolt.
+
+- Path: `$RUNE_DATADIR/lib/github.com/unstablebuild/rune-cursor-pack/shaders/lightning_color.kage`
 - Suggested duration: `350ms`
 
 ### Fire trail
@@ -62,7 +71,7 @@ pkg install github.com/unstablebuild/rune-cursor-pack
 
 Then restart Rune: it loads the cursor shader when it starts.
 
-The install turns the effect on with the lightning shader. If your config
+The install turns the effect on with the lightning color shader. If your config
 already sets `animations.cursor`, Rune keeps your values, so set them yourself
 as shown below.
 
@@ -100,8 +109,10 @@ pays for a redraw of the whole window.
 ## Test
 
 The test module uses Rune's Ebitengine fork to compile every shader and render
-Smear on a real graphics backend. It checks jump directions, block/bar/
-underline cursors, shape changes, collapsed edges, timing, and alpha blending.
+Smear and Lightning color on a real graphics backend. It checks Smear's jump
+directions, block/bar/underline cursors, shape changes, collapsed edges,
+timing, and alpha blending, and that Lightning color's bolt takes the cursor's
+color.
 Run it in a graphical session; it briefly opens a small test window:
 
 ```sh
