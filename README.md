@@ -1,8 +1,8 @@
-# Cursor pack for Rune
+# Cursor shaders pack for Rune
 
-Shaders that play over Rune's window when the cursor jumps, such as to another
-window or another part of a file. Installing the pack configures your instance of
-Rune to use the lightning color shader.
+Shaders that play when the cursor jumps, such as to another window or another part of a
+file. Installing the pack configures your instance of Rune to use the lightning color
+shader.
 
 ## Shaders
 
