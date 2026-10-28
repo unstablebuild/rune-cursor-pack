@@ -1,0 +1,110 @@
+//kage:unit pixels
+
+// Basic cursor smear: a solid, cursor-colored hexagon contracts into the
+// destination with cubic ease-out. Try 300ms.
+
+package main
+
+const MinJumpRows = 2
+const MinJumpColumns = 9
+
+var Time float
+var Duration float
+var Cursor vec4
+var PreviousCursor vec4
+var CursorColor vec4
+
+// Work in Y-up pixel coordinates for counter-clockwise winding. Rune's
+// rectangles and dstPos are Y-down.
+func corners(rect vec4, selector vec2) (vec2, vec2, vec2, vec2) {
+	tl := vec2(rect.x, -rect.y)
+	tr := tl + vec2(rect.z, 0)
+	bl := tl - vec2(0, rect.w)
+	br := tl + vec2(rect.z, -rect.w)
+	p1 := mix(mix(tr, tl, selector.x), mix(br, bl, selector.x), selector.y)
+	p2 := mix(mix(tl, bl, selector.x), mix(tr, br, selector.x), selector.y)
+	p3 := mix(mix(br, tr, selector.x), mix(bl, tl, selector.x), selector.y)
+	p4 := mix(mix(bl, br, selector.x), mix(tl, tr, selector.x), selector.y)
+	return p1, p2, p3, p4
+}
+
+// state is (minimum squared edge distance, inside). Repeated vertices occur
+// at half time, when the two faster corners reach the cursor; skip those
+// zero-length edges rather than divide by zero as in the GLSL version.
+func edge(p, a, b, state vec2) vec2 {
+	e := b - a
+	lenSq := dot(e, e)
+	if lenSq <= 0.000001 {
+		return state
+	}
+	pa := p - a
+	diff := pa - e*clamp(dot(pa, e)/lenSq, 0, 1)
+	cross := e.x*pa.y - e.y*pa.x
+	// A change of cursor shape can make the six vertices concave. Count
+	// rightward ray crossings instead of intersecting convex half-planes.
+	inside := state.y
+	if (a.y > p.y) != (b.y > p.y) {
+		if (e.y > 0 && cross > 0) || (e.y < 0 && cross < 0) {
+			inside = 1 - inside
+		}
+	}
+	return vec2(min(state.x, dot(diff, diff)), inside)
+}
+
+func hexagon(p, v0, v1, v2, v3, v4, v5 vec2) float {
+	state := vec2(1e20, 0)
+	state = edge(p, v0, v1, state)
+	state = edge(p, v1, v2, state)
+	state = edge(p, v2, v3, state)
+	state = edge(p, v3, v4, state)
+	state = edge(p, v4, v5, state)
+	state = edge(p, v5, v0, state)
+	d := sqrt(state.x)
+	return mix(d, -d, state.y)
+}
+
+func ease(p float) float {
+	t := 1 - p
+	return 1 - t*t*t
+}
+
+func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4 {
+	window := imageSrc0At(srcPos)
+	if Duration <= 0 || Time >= Duration || min(Cursor.z, Cursor.w) <= 0 || CursorColor.a <= 0 {
+		return window
+	}
+	delta := Cursor.xy - PreviousCursor.xy
+	if dot(delta, delta) < 0.000001 {
+		return window
+	}
+	// The trail cannot escape the union's bounding rectangle (plus AA).
+	lo := min(Cursor.xy, PreviousCursor.xy) - 1
+	hi := max(Cursor.xy+Cursor.zw, PreviousCursor.xy+PreviousCursor.zw) + 1
+	if dstPos.x < lo.x || dstPos.y < lo.y || dstPos.x > hi.x || dstPos.y > hi.y {
+		return window
+	}
+	// Rune draws the cursor on top afterwards; leave its underlying text alone.
+	q := abs(dstPos.xy-(Cursor.xy+Cursor.zw/2)) - Cursor.zw/2
+	if max(q.x, q.y) <= 0 {
+		return window
+	}
+
+	progress := clamp(Time/Duration, 0, 1)
+	selector := step(vec2(0), vec2(delta.x, -delta.y))
+	c1, c2, c3, c4 := corners(Cursor, selector)
+	p1, p2, p3, unused := corners(PreviousCursor, selector)
+	_ = unused
+	t1 := mix(p1, c1, ease(progress))
+	t2 := mix(p2, c2, ease(min(progress*2, 1)))
+	t3 := mix(p3, c3, ease(min(progress*2, 1)))
+	d := hexagon(vec2(dstPos.x, -dstPos.y), t1, t2, c2, c4, c3, t3)
+	alpha := 1 - smoothstep(-1, 1, d)
+	// Remove the final subpixel AA halo as the hexagon collapses.
+	alpha *= smoothstep(0, 1, distance(t1, c1))
+
+	rgb := CursorColor.rgb / CursorColor.a
+	gray := dot(rgb, vec3(0.299, 0.587, 0.114))
+	rgb = clamp(mix(vec3(gray), rgb, 1.8), 0, 1)
+	alpha *= CursorColor.a
+	return vec4(rgb*alpha, alpha) + window*(1-alpha)
+}

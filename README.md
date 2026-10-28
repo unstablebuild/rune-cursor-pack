@@ -40,6 +40,17 @@ them, then they die down to embers and a wisp of smoke.
 - Path: `$RUNE_DATADIR/lib/github.com/unstablebuild/rune-cursor-pack/shaders/fire.kage`
 - Suggested duration: `800ms`
 
+### Smear
+
+![The cursor smears between positions in its own color](previews/smear.gif)
+
+A solid smear in your theme's cursor color stretches between positions, then
+contracts into the cursor with cubic ease-out. One corner lingers behind the
+others for an elastic finish.
+
+- Path: `$RUNE_DATADIR/lib/github.com/unstablebuild/rune-cursor-pack/shaders/smear.kage`
+- Suggested duration: `300ms`
+
 ## Install
 
 Cursor shaders need the Rune GUI, in a version that has the
@@ -85,3 +96,19 @@ Rune's Animations guide for the values Rune gives a shader, and for the
 `MinJumpRows` and `MinJumpColumns` constants that decide how far the cursor
 must move to play it. All the shaders here keep the defaults, so typing never
 pays for a redraw of the whole window.
+
+## Test
+
+The test module uses Rune's Ebitengine fork to compile every shader and render
+Smear on a real graphics backend. It checks jump directions, block/bar/
+underline cursors, shape changes, collapsed edges, timing, and alpha blending.
+Run it in a graphical session; it briefly opens a small test window:
+
+```sh
+cd tests
+go test -count=1 ./...
+```
+
+For GPU-rendered PNG frames to inspect, set `RUNE_SHADER_TEST_IMAGES` to an
+output directory when running the tests. These are test images, not Rune
+screen recordings.

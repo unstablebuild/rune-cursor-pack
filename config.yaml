@@ -6,5 +6,6 @@ animations:
     #   lightning:  $RUNE_DATADIR/lib/github.com/unstablebuild/rune-cursor-pack/shaders/lightning.kage (350ms)
     #   fire-trail: $RUNE_DATADIR/lib/github.com/unstablebuild/rune-cursor-pack/shaders/fire-trail.kage (250ms)
     #   fire:       $RUNE_DATADIR/lib/github.com/unstablebuild/rune-cursor-pack/shaders/fire.kage (800ms)
+    #   smear:      $RUNE_DATADIR/lib/github.com/unstablebuild/rune-cursor-pack/shaders/smear.kage (300ms)
     shader: $RUNE_DATADIR/lib/$RUNE_PKG_ID/shaders/lightning.kage
     duration: 350ms
